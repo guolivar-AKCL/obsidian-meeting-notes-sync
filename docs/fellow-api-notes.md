@@ -65,7 +65,7 @@ Both `NoteFilters` and `RecordingFilters` support:
 * `event_guid` — useful for cross-source identity matching (tie a Fellow recording to a calendar event).
 * `created_at_start`, `created_at_end` — ISO 8601 timestamps.
 * `updated_at_start`, `updated_at_end` — ISO 8601 timestamps; `updated_at_start` is the main incremental-sync filter.
-* `channel_id` — workspace channel filter.
+* `channel_id` — workspace channel filter. **One channel per request**; see §8.
 * `title` — substring match on title.
 
 Note also supports `event_attendees` (array of emails).
@@ -86,6 +86,50 @@ For manual notes, fetch `GET /note/{recording.note_id}` when the note sync toggl
 ### 7. `media_url`
 
 `Recording.media_url` is a pre-signed URL for the recording media. It requires a privileged API key and is `null` for personal keys. Not used by this plugin.
+
+### 8. Channels (`filters.channel_id`)
+
+Probed live against a real workspace while adding the channel filter. Four
+findings, none of them documented by Fellow:
+
+**The id is a Relay global id, not the numeric channel id.** `filters.channel_id`
+expects `base64("Channel:<numeric id>")`. This is also the last path segment of a
+channel's web URL, which is where a user can actually get it:
+
+```
+https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4/
+                                  └─ base64 → "Channel:2073608"
+```
+
+Anything else is rejected: a numeric id gives `400 Input should be a valid
+string`, and a numeric *string* or arbitrary text gives
+`400 Invalid filters: Invalid ID format`. Note the mismatch with Fellow's MCP
+tools, which report the plain integer (`2073608`) — `toChannelId`
+(`src/settings.ts`) converts between the two.
+
+**There is no channel-listing endpoint.** `GET/POST /channels`, `GET /channel`,
+and `GET /workspace/channels` all 404. Channel ids must be entered by hand, so
+the settings UI accepts a pasted URL, a bare number, or the opaque id, and
+validates by decoding rather than deferring the failure to a mid-sync 400.
+
+**Unknown channels are rejected, not ignored.** A well-formed id for a channel
+that does not exist (or that the key cannot see) returns
+`400 Invalid filters: User does not have access, or channel ID is invalid`.
+This is the property the channel filter's safety rests on: a mistyped id fails
+the sync loudly instead of silently falling back to the whole workspace, which
+is what would leak meetings into a vault that should not have them.
+
+**The filter is single-valued and channels overlap.** Syncing several channels
+means one paginated walk per channel, merged and deduped by recording id — a
+recording really can appear in more than one channel (observed: ~19 of 147 in
+the probed workspace). Recording and note payloads carry **no** channel field,
+so a recording's channel is only knowable from which query returned it; there is
+no way to post-filter client-side, and no way to label a note with its channel
+without tracking the query.
+
+Also worth knowing for anyone relying on channel filtering: recordings can
+belong to **no** channel at all (~35 of 147 in the probed workspace), and those
+are invisible to any channel-filtered sync.
 
 ## Redacted JSON samples
 

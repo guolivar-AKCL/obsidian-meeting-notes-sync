@@ -37,6 +37,75 @@ export function cleanSubdomain(input: string): string {
 	return value.replace(/[^a-z0-9-]/g, "");
 }
 
+/**
+ * Fellow's REST `filters.channel_id` is an opaque global id — base64 of
+ * `Channel:<numeric id>` — which is also the last segment of a channel URL
+ * (`/library/c/Q2hhbm5lbDoyMDczNjA4/`). There is no channel-listing endpoint,
+ * so ids are entered by hand; accept every form a user plausibly has to hand.
+ */
+export function toChannelId(input: string): string | null {
+	const value = input.trim().replace(/[,\s]+$/, "");
+	if (value.length === 0) {
+		return null;
+	}
+
+	// A pasted channel URL: take the single path segment after /c/.
+	const candidate = /\/c\/([^/\s?#]+)/.exec(value)?.[1] ?? value;
+
+	// A bare numeric id (what Fellow's UI and MCP tools report) → encode it.
+	if (/^\d+$/.test(candidate)) {
+		return base64(`Channel:${candidate}`);
+	}
+
+	// Already an opaque id. Only accept one that decodes to a channel global id,
+	// so a typo fails in settings rather than as a 400 mid-sync.
+	if (
+		/^[A-Za-z0-9+/=_-]+$/.test(candidate) &&
+		/^Channel:\d+$/.test(fromBase64(candidate))
+	) {
+		return candidate;
+	}
+
+	return null;
+}
+
+/** Parse the channels field (comma- or newline-separated) into unique ids. */
+export function cleanChannelIds(input: string): string[] {
+	const ids: string[] = [];
+	for (const part of input.split(/[\n,]/)) {
+		const id = toChannelId(part);
+		if (id && !ids.includes(id)) {
+			ids.push(id);
+		}
+	}
+	return ids;
+}
+
+/** Entries that could not be parsed, so the settings UI can name them. */
+export function invalidChannelInputs(input: string): string[] {
+	return input
+		.split(/[\n,]/)
+		.map((part) => part.trim())
+		.filter((part) => part.length > 0 && toChannelId(part) === null);
+}
+
+function base64(value: string): string {
+	return typeof Buffer !== "undefined"
+		? Buffer.from(value, "utf8").toString("base64")
+		: btoa(value);
+}
+
+/** Decode base64, returning "" for anything malformed. */
+function fromBase64(value: string): string {
+	try {
+		return typeof Buffer !== "undefined"
+			? Buffer.from(value, "base64").toString("utf8")
+			: atob(value);
+	} catch {
+		return "";
+	}
+}
+
 /** Coerce an overlap threshold to a number between 0 and 1. */
 export function cleanOverlapThreshold(input: string | number): number {
 	const value = typeof input === "number" ? input : Number.parseFloat(input);

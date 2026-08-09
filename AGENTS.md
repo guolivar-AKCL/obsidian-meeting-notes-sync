@@ -52,6 +52,23 @@ mis-dates notes and overlaps the *next* meeting during cross-source matching
 do not "fix" it. The derived start is only as good as `durationMs`; a paused or
 re-recorded session whose duration no longer matches wall-clock can still be off.
 
+## Fellow channel ids are Relay global ids
+
+`filters.channel_id` on `POST /recordings` is **not** the numeric channel id
+Fellow's UI and MCP tools show. It is `base64("Channel:<numeric id>")` — the last
+path segment of a channel URL. `toChannelId` (`src/settings.ts`) accepts a URL, a
+number, or the opaque id and normalizes all three; it validates by *decoding*,
+because an id that merely looks like base64 fails as a mid-sync 400 instead.
+
+The filter takes **one channel per request**, so `FellowClient.listRecordings`
+fans out one paginated walk per channel and dedupes by recording id — a recording
+can belong to several channels. Never add a fallback that drops the filter on
+error: an unknown channel returns 400, and silently listing the whole workspace
+instead would sync meetings into a vault chosen precisely to exclude them.
+
+Full findings, including the absence of a channel-listing endpoint, are in
+[docs/fellow-api-notes.md](docs/fellow-api-notes.md) §8.
+
 ## Releases
 
 `.github/workflows/release.yml` cuts a GitHub release with:

@@ -8,11 +8,13 @@ import {
 import type MeetingNotesSyncPlugin from "./main";
 import {
 	cleanBaseFolder,
+	cleanChannelIds,
 	cleanInterval,
 	cleanMinimumOverlapMinutes,
 	cleanOverlapThreshold,
 	cleanSubdomain,
 	cleanTranscriptSourcePreference,
+	invalidChannelInputs,
 	isValidSyncSince,
 	isValidTemplate,
 } from "./settings";
@@ -22,6 +24,7 @@ export class MeetingNotesSettingTab extends PluginSettingTab {
 	private readonly plugin: MeetingNotesSyncPlugin;
 	private cliStatusEl: HTMLElement | null = null;
 	private fellowStatusEl: HTMLElement | null = null;
+	private channelSummaryEl: HTMLElement | null = null;
 
 	constructor(app: App, plugin: MeetingNotesSyncPlugin) {
 		super(app, plugin);
@@ -127,6 +130,44 @@ export class MeetingNotesSettingTab extends PluginSettingTab {
 			cls: "setting-item-description",
 		});
 		void this.refreshFellowStatus();
+
+		const channelsError = containerEl.createEl("div", {
+			cls: "setting-item-description mod-warning",
+		});
+		new Setting(containerEl)
+			.setName("Fellow channels")
+			.setDesc(
+				"Only sync meetings in these channels; leave empty to sync the whole workspace. " +
+					"One per line — paste a channel URL from Fellow, or its id. " +
+					"This is per-vault, so each device can sync a different subset.",
+			)
+			.addTextArea((text) => {
+				text.inputEl.rows = 4;
+				text.inputEl.placeholder =
+					"https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4/";
+				text.setValue(settings.fellowChannelIds.join("\n")).onChange(
+					debounce(
+						async (value: string) => {
+							const invalid = invalidChannelInputs(value);
+							channelsError.setText(
+								invalid.length > 0
+									? `Not a channel URL or id: ${invalid.join(", ")}`
+									: "",
+							);
+							await this.plugin.updateSettings({
+								fellowChannelIds: cleanChannelIds(value),
+							});
+							this.refreshChannelSummary();
+						},
+						600,
+						true,
+					),
+				);
+			});
+		this.channelSummaryEl = containerEl.createEl("div", {
+			cls: "setting-item-description",
+		});
+		this.refreshChannelSummary();
 
 		new Setting(containerEl).setName("Merge").setHeading();
 
@@ -304,6 +345,23 @@ export class MeetingNotesSettingTab extends PluginSettingTab {
 			el.addClass("mod-warning");
 			el.setText(`Not connected: ${status.error}`);
 		}
+	}
+
+	/**
+	 * Spell out the current scope. Restricting channels silently drops meetings,
+	 * so the effect of the field is always stated rather than inferred.
+	 */
+	private refreshChannelSummary(): void {
+		const el = this.channelSummaryEl;
+		if (!el) {
+			return;
+		}
+		const count = this.plugin.getSettings().fellowChannelIds.length;
+		el.setText(
+			count === 0
+				? "Syncing every channel in the workspace."
+				: `Syncing ${count} channel${count === 1 ? "" : "s"} only; meetings outside them (including meetings in no channel) are skipped.`,
+		);
 	}
 
 	private async refreshFellowStatus(): Promise<void> {

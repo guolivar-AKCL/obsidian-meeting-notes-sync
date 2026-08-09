@@ -6,6 +6,7 @@ import {
 	type FellowHttp,
 	type FellowHttpRequest,
 	type FellowHttpResponse,
+	type RecordingFilters,
 } from "./types";
 
 const CONFIG: FellowConfig = { subdomain: "example", apiKey: "key-123" };
@@ -100,6 +101,114 @@ describe("FellowClient.listRecordings", () => {
 	it("throws a parse error when the payload shape is wrong", async () => {
 		const { http } = recordingTransport(() => jsonResponse(200, { recordings: {} }));
 		await expect(makeClient(http).listRecordings()).rejects.toMatchObject({ kind: "parse" });
+	});
+
+	it("sends no channel filter when the channel list is empty", async () => {
+		const { http, calls } = recordingTransport(() =>
+			jsonResponse(200, { recordings: { page_info: { cursor: null, page_size: 50 }, data: [] } }),
+		);
+
+		await makeClient(http).listRecordings({ channelIds: [] });
+
+		expect(calls).toHaveLength(1);
+		const body = JSON.parse(calls[0]?.body ?? "{}") as { filters?: RecordingFilters };
+		expect(body.filters?.channel_id).toBeUndefined();
+	});
+
+	it("filters by channel, keeping the updated_at watermark", async () => {
+		const { http, calls } = recordingTransport(() =>
+			jsonResponse(200, { recordings: { page_info: { cursor: null, page_size: 50 }, data: [] } }),
+		);
+
+		await makeClient(http).listRecordings({
+			updatedAtStart: "2026-06-01T00:00:00Z",
+			channelIds: ["Q2hhbm5lbDoyMDczNjA4"],
+		});
+
+		expect(calls).toHaveLength(1);
+		const body = JSON.parse(calls[0]?.body ?? "{}") as { filters?: RecordingFilters };
+		expect(body.filters?.channel_id).toBe("Q2hhbm5lbDoyMDczNjA4");
+		expect(body.filters?.updated_at_start).toBe("2026-06-01T00:00:00Z");
+	});
+
+	it("fans out one request per channel, since the API filters one at a time", async () => {
+		const { http, calls } = recordingTransport((req) => {
+			const body = JSON.parse(req.body ?? "{}") as { filters?: RecordingFilters };
+			const id = body.filters?.channel_id === "channel_a" ? "recording_a" : "recording_b";
+			return jsonResponse(200, {
+				recordings: { page_info: { cursor: null, page_size: 50 }, data: [{ ...RECORDING, id }] },
+			});
+		});
+
+		const recordings = await makeClient(http).listRecordings({
+			channelIds: ["channel_a", "channel_b"],
+		});
+
+		expect(calls).toHaveLength(2);
+		expect(recordings.map((r) => r.id)).toEqual(["recording_a", "recording_b"]);
+	});
+
+	it("dedupes a recording that belongs to several channels", async () => {
+		// Real case from the workspace spike: the "Nick" meetings sit in both
+		// "AC stuff" and "MfE stuff", and must render once, not twice.
+		const { http } = recordingTransport(() =>
+			jsonResponse(200, {
+				recordings: { page_info: { cursor: null, page_size: 50 }, data: [RECORDING] },
+			}),
+		);
+
+		const recordings = await makeClient(http).listRecordings({
+			channelIds: ["channel_a", "channel_b"],
+		});
+
+		expect(recordings.map((r) => r.id)).toEqual(["recording_001"]);
+	});
+
+	it("paginates within each channel independently", async () => {
+		const { http, calls } = recordingTransport((req) => {
+			const body = JSON.parse(req.body ?? "{}") as {
+				pagination?: { cursor?: string | null };
+				filters?: RecordingFilters;
+			};
+			const channel = body.filters?.channel_id ?? "none";
+			if (!body.pagination?.cursor) {
+				return jsonResponse(200, {
+					recordings: {
+						page_info: { cursor: "next", page_size: 50 },
+						data: [{ ...RECORDING, id: `${channel}_1` }],
+					},
+				});
+			}
+			return jsonResponse(200, {
+				recordings: {
+					page_info: { cursor: null, page_size: 50 },
+					data: [{ ...RECORDING, id: `${channel}_2` }],
+				},
+			});
+		});
+
+		const recordings = await makeClient(http).listRecordings({
+			channelIds: ["channel_a", "channel_b"],
+		});
+
+		expect(calls).toHaveLength(4);
+		expect(recordings.map((r) => r.id)).toEqual([
+			"channel_a_1",
+			"channel_a_2",
+			"channel_b_1",
+			"channel_b_2",
+		]);
+	});
+
+	it("propagates a rejected channel id rather than syncing the whole workspace", async () => {
+		// Fellow answers an unknown channel with 400 "User does not have access,
+		// or channel ID is invalid". Failing loudly is the point: silently falling
+		// back to an unfiltered list would leak meetings into the wrong vault.
+		const { http } = recordingTransport(() => jsonResponse(400, { detail: "Invalid filters" }));
+
+		await expect(
+			makeClient(http).listRecordings({ channelIds: ["Q2hhbm5lbDox"] }),
+		).rejects.toMatchObject({ kind: "http", status: 400 });
 	});
 });
 
