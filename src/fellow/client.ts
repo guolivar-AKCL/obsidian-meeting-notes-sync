@@ -33,6 +33,12 @@ export interface FellowClientDeps {
 export interface ListRecordingsOptions {
 	/** ISO 8601 lower bound for `updated_at`; the incremental-sync watermark. */
 	updatedAtStart?: string;
+	/**
+	 * Restrict the listing to these channels; empty/omitted lists every channel.
+	 * The API takes one channel per request, so several ids fan out into one
+	 * paginated walk each, deduped by recording id.
+	 */
+	channelIds?: string[];
 }
 
 /** Talks to one Fellow workspace, mapping failures to FellowError. */
@@ -59,11 +65,43 @@ export class FellowClient {
 	 * List recordings (the primary enumeration object, per the spike), walking
 	 * cursor pagination. No expensive includes: change detection only needs the
 	 * base fields, and transcripts/recaps are fetched per meeting on change.
+	 *
+	 * With `channelIds`, one walk runs per channel — the API filters a single
+	 * channel per request — and the results are merged, deduped by recording id
+	 * because a meeting can belong to several channels.
 	 */
 	async listRecordings(options: ListRecordingsOptions = {}): Promise<FellowRecording[]> {
+		const channelIds = options.channelIds ?? [];
+		if (channelIds.length === 0) {
+			return this.listRecordingsPage(options.updatedAtStart, undefined);
+		}
+
+		const byId = new Map<string, FellowRecording>();
+		for (const channelId of channelIds) {
+			for (const recording of await this.listRecordingsPage(
+				options.updatedAtStart,
+				channelId,
+			)) {
+				// First writer wins; the payloads are identical across channels.
+				if (!byId.has(recording.id)) {
+					byId.set(recording.id, recording);
+				}
+			}
+		}
+		return [...byId.values()];
+	}
+
+	/** One full paginated walk, optionally scoped to a single channel. */
+	private async listRecordingsPage(
+		updatedAtStart: string | undefined,
+		channelId: string | undefined,
+	): Promise<FellowRecording[]> {
 		const filters: RecordingFilters = {};
-		if (options.updatedAtStart) {
-			filters.updated_at_start = options.updatedAtStart;
+		if (updatedAtStart) {
+			filters.updated_at_start = updatedAtStart;
+		}
+		if (channelId) {
+			filters.channel_id = channelId;
 		}
 
 		const recordings: FellowRecording[] = [];

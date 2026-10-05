@@ -39,6 +39,36 @@ Polls Fellow's REST Developer API for cloud AI recaps. Setup:
 
 > ⚠️ The Fellow key is stored in plaintext in `data.json` (standard for API-backed plugins). If your vault is in git or a synced folder, exclude that file and treat the key as a secret; revoke it in Fellow if it leaks.
 
+#### Syncing only some channels
+
+By default every meeting in the workspace syncs. **Fellow channels** narrows that
+to a list of channels — useful when one Fellow workspace covers several contexts
+and a given vault should only hold one of them. Settings are per-vault, so each
+device can sync a different subset:
+
+| Vault | Fellow channels |
+|---|---|
+| Personal laptop | *(empty — everything)* |
+| Work laptop | the work channel's URL |
+
+Open a channel in Fellow and paste its URL, one per line. A bare channel number
+or the opaque id works too — all three are normalized to the same thing:
+
+```
+https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4/
+```
+
+Three things to know before relying on this:
+
+- **Filtering happens server-side**, so meetings outside your channels are never
+  fetched at all — they don't reach the device.
+- **Meetings in no channel never sync** when the list is non-empty. Depending on
+  how you use Fellow this can be a lot of meetings; check before assuming a
+  channel list is complete.
+- **Narrowing the list later doesn't remove already-synced notes.** The plugin
+  never deletes what it has written; delete those folders yourself if you want
+  them gone.
+
 ## Installation
 
 Pending community-store review — until it lands there, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat) (*Add beta plugin* → `andreagrandi/obsidian-meeting-notes-sync`), or manually drop `main.js` + `manifest.json` from a [release](https://github.com/andreagrandi/obsidian-meeting-notes-sync/releases) into `<vault>/.obsidian/plugins/meeting-notes-sync/` and enable the plugin. To build from source:
@@ -56,6 +86,7 @@ If you used an earlier build under the `macparakeet-sync` id: quit Obsidian, ren
 Sync runs shortly after launch and every 30 minutes (configurable; `0` disables), or on demand via the ribbon icon / **Sync now**. The main settings:
 
 - **Sources** — enable MacParakeet and/or Fellow (see above).
+- **Fellow channels** — restrict Fellow to specific channels; empty syncs the whole workspace ([details](#syncing-only-some-channels)).
 - **Base folder** — where meeting folders go (empty = vault root, so the default template's `Meetings/…` is the root).
 - **Path template** — folder path per meeting (see tokens below).
 - **Content** — AI results (on), meeting notes (on), full transcript (off; transcripts are long). Applies to every source; for merged meetings, choose whether to keep every transcript or only the MacParakeet/Fellow transcript.

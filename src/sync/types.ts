@@ -34,6 +34,12 @@ export interface Settings {
 	fellowSubdomain: string;
 	/** Fellow personal API key; stored plaintext in data.json. */
 	fellowApiKey: string;
+	/**
+	 * Fellow channel ids to restrict the sync to; empty syncs every channel.
+	 * Ids are Fellow's opaque global ids (the `Q2hhbm5lbDo…` in a channel URL).
+	 * Per-vault, so one device can sync a subset of a shared workspace.
+	 */
+	fellowChannelIds: string[];
 	/** Minimum overlap fraction (0-1) for cross-source merge. */
 	overlapThreshold: number;
 	/** Minimum overlap in minutes for cross-source merge. */
@@ -56,6 +62,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	sourceFellowEnabled: false,
 	fellowSubdomain: "",
 	fellowApiKey: "",
+	fellowChannelIds: [],
 	overlapThreshold: 0.5,
 	minimumOverlapMinutes: 5,
 };

@@ -60,6 +60,7 @@ function normalizeSettings(raw: unknown): Settings {
 			DEFAULT_SETTINGS.fellowSubdomain,
 		),
 		fellowApiKey: asString(obj.fellowApiKey, DEFAULT_SETTINGS.fellowApiKey),
+		fellowChannelIds: asStringArray(obj.fellowChannelIds),
 		overlapThreshold: clampOverlap(
 			asNumber(obj.overlapThreshold, DEFAULT_SETTINGS.overlapThreshold),
 		),
@@ -247,6 +248,16 @@ function asString(value: unknown, fallback: string): string {
 
 function asBool(value: unknown, fallback: boolean): boolean {
 	return typeof value === "boolean" ? value : fallback;
+}
+
+/** Persisted channel ids; anything not a non-empty string is dropped. */
+function asStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.filter(
+		(entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+	);
 }
 
 function asNumber(value: unknown, fallback: number): number {

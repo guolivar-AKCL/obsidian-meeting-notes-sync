@@ -388,3 +388,113 @@ describe("FellowAdapter.isEnabled", () => {
 		);
 	});
 });
+
+describe("FellowAdapter — channel scoping", () => {
+	/** Transport that serves per-channel rows and records the filters it saw. */
+	function channelTransport() {
+		const channelFilters: Array<string | undefined> = [];
+		const rowsByChannel: Record<string, FellowRecording[]> = {
+			channel_work1: [{ ...LIST_ROW, id: "work1_rec", title: "Work1 Sync" }],
+			channel_work2: [{ ...LIST_ROW, id: "work2_rec", title: "Work2 Sync" }],
+		};
+		const http: FellowHttp = async (req) => {
+			if (req.url.endsWith("/recordings") && req.method === "POST") {
+				const body = JSON.parse(req.body ?? "{}") as {
+					filters?: { channel_id?: string };
+				};
+				const channelId = body.filters?.channel_id;
+				channelFilters.push(channelId);
+				const data = channelId
+					? (rowsByChannel[channelId] ?? [])
+					: Object.values(rowsByChannel).flat();
+				return json({
+					recordings: { page_info: { cursor: null, page_size: 50 }, data },
+				});
+			}
+			const id = /\/recording\/([^/]+)$/.exec(req.url)?.[1];
+			if (id) {
+				const row = Object.values(rowsByChannel)
+					.flat()
+					.find((candidate) => candidate.id === id);
+				return json({ recording: { ...RECORDING_DETAIL, id, title: row?.title ?? null } });
+			}
+			if (req.url.includes("/note/")) {
+				return json({ note: NOTE });
+			}
+			throw new Error(`unexpected request: ${req.method} ${req.url}`);
+		};
+		return { http, channelFilters };
+	}
+
+	it("sends no channel filter when the setting is empty", async () => {
+		const { http, channelFilters } = channelTransport();
+		const vault = new FakeVault();
+		await makeEngine(
+			http,
+			emptyState("2026-06-01"),
+			settings({ fellowChannelIds: [] }),
+			vault,
+		).sync();
+
+		expect(channelFilters).toEqual([undefined]);
+	});
+
+	it("imports only the configured channel's meetings", async () => {
+		const { http, channelFilters } = channelTransport();
+		const vault = new FakeVault();
+		const result = await makeEngine(
+			http,
+			emptyState("2026-06-01"),
+			settings({ fellowChannelIds: ["channel_work1"] }),
+			vault,
+		).sync();
+
+		expect(channelFilters).toEqual(["channel_work1"]);
+		expect(result).toEqual({ created: 1, updated: 0, unchanged: 0 });
+		const paths = [...vault.files.keys()].join("\n");
+		expect(paths).toContain("Work1 Sync");
+		expect(paths).not.toContain("Work2 Sync");
+	});
+
+	it("imports the union when several channels are configured", async () => {
+		const { http, channelFilters } = channelTransport();
+		const vault = new FakeVault();
+		const result = await makeEngine(
+			http,
+			emptyState("2026-06-01"),
+			settings({ fellowChannelIds: ["channel_work1", "channel_work2"] }),
+			vault,
+		).sync();
+
+		expect(channelFilters).toEqual(["channel_work1", "channel_work2"]);
+		expect(result).toEqual({ created: 2, updated: 0, unchanged: 0 });
+		const paths = [...vault.files.keys()].join("\n");
+		expect(paths).toContain("Work1 Sync");
+		expect(paths).toContain("Work2 Sync");
+	});
+
+	it("reports the failure instead of syncing everything when a channel id is rejected", async () => {
+		const http: FellowHttp = async (req) => {
+			if (req.url.endsWith("/recordings")) {
+				return {
+					status: 400,
+					text: JSON.stringify({
+						detail: "Invalid filters: User does not have access, or channel ID is invalid",
+					}),
+				};
+			}
+			throw new Error(`unexpected request: ${req.method} ${req.url}`);
+		};
+		const vault = new FakeVault();
+		const result = await makeEngine(
+			http,
+			emptyState("2026-06-01"),
+			settings({ fellowChannelIds: ["Q2hhbm5lbDox"] }),
+			vault,
+		).sync();
+
+		expect(result.created).toBe(0);
+		expect(result.errors?.[0]?.source).toBe("fellow");
+		expect(vault.files.size).toBe(0);
+	});
+});

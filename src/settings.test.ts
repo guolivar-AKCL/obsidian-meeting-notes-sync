@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
 	cleanBaseFolder,
+	cleanChannelIds,
 	cleanInterval,
 	cleanMinimumOverlapMinutes,
 	cleanOverlapThreshold,
 	cleanSubdomain,
 	cleanTranscriptSourcePreference,
+	invalidChannelInputs,
 	isValidSyncSince,
 	isValidTemplate,
+	toChannelId,
 } from "./settings";
+
+/** Real ids from the workspace spike: base64("Channel:<numeric id>"). */
+const AC_STUFF = "Q2hhbm5lbDoyMDczNjA4"; // Channel:2073608
+const MFE_STUFF = "Q2hhbm5lbDoyMDczNjA5"; // Channel:2073609
 
 describe("cleanBaseFolder", () => {
 	it("trims whitespace and strips leading/trailing slashes", () => {
@@ -130,5 +137,80 @@ describe("isValidSyncSince", () => {
 		expect(isValidSyncSince("12-06-2026")).toBe(false);
 		expect(isValidSyncSince("2026-13-40")).toBe(false);
 		expect(isValidSyncSince("garbage")).toBe(false);
+	});
+});
+
+describe("toChannelId", () => {
+	it("extracts the id from a pasted channel URL", () => {
+		expect(
+			toChannelId("https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4/"),
+		).toBe(AC_STUFF);
+	});
+
+	it("tolerates a URL without the trailing slash", () => {
+		expect(toChannelId("https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4")).toBe(
+			AC_STUFF,
+		);
+	});
+
+	it("encodes a bare numeric id the way the REST filter expects", () => {
+		expect(toChannelId("2073608")).toBe(AC_STUFF);
+		expect(toChannelId("  2073609  ")).toBe(MFE_STUFF);
+	});
+
+	it("passes an opaque id through unchanged", () => {
+		expect(toChannelId(AC_STUFF)).toBe(AC_STUFF);
+	});
+
+	it("rejects a string that does not decode to a channel global id", () => {
+		// Would have been accepted as 'looks like base64' without the decode check,
+		// then failed mid-sync with a 400 instead of in settings.
+		expect(toChannelId("AAAAAAAAAA")).toBeNull();
+		expect(toChannelId("bm90LWEtY2hhbm5lbA==")).toBeNull(); // "not-a-channel"
+		expect(toChannelId("definitely not an id")).toBeNull();
+		expect(toChannelId("")).toBeNull();
+	});
+});
+
+describe("cleanChannelIds", () => {
+	it("returns an empty list for blank input (meaning every channel)", () => {
+		expect(cleanChannelIds("")).toEqual([]);
+		expect(cleanChannelIds("  \n  ")).toEqual([]);
+	});
+
+	it("parses newline- and comma-separated entries", () => {
+		expect(cleanChannelIds(`${AC_STUFF}\n${MFE_STUFF}`)).toEqual([
+			AC_STUFF,
+			MFE_STUFF,
+		]);
+		expect(cleanChannelIds(`${AC_STUFF}, ${MFE_STUFF}`)).toEqual([
+			AC_STUFF,
+			MFE_STUFF,
+		]);
+	});
+
+	it("normalizes mixed forms to the same id and dedupes", () => {
+		const input = [
+			"https://acme.fellow.app/library/c/Q2hhbm5lbDoyMDczNjA4/",
+			"2073608",
+			AC_STUFF,
+		].join("\n");
+		expect(cleanChannelIds(input)).toEqual([AC_STUFF]);
+	});
+
+	it("drops unparseable entries rather than passing them to the API", () => {
+		expect(cleanChannelIds(`${AC_STUFF}\ngarbage`)).toEqual([AC_STUFF]);
+	});
+});
+
+describe("invalidChannelInputs", () => {
+	it("names the entries that could not be parsed", () => {
+		expect(invalidChannelInputs(`${AC_STUFF}\ngarbage\n2073609`)).toEqual([
+			"garbage",
+		]);
+	});
+
+	it("is empty when every entry parses", () => {
+		expect(invalidChannelInputs(`${AC_STUFF}\n2073609`)).toEqual([]);
 	});
 });

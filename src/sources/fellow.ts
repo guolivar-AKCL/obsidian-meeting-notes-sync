@@ -44,6 +44,7 @@ export class FellowAdapter implements SourceAdapter {
 	async listMeetings(): Promise<SourceMeeting[]> {
 		const recordings = await this.client.listRecordings({
 			updatedAtStart: this.updatedAtStart(),
+			channelIds: this.getSettings().fellowChannelIds,
 		});
 		this.listedUpdatedAt = new Map(
 			recordings.map((recording) => [
